@@ -1,9 +1,0 @@
-Permutation test for adonis under reduced model
-Permutation: free
-Number of permutations: 719
-
-adonis2(formula = phyloseq::distance(ps, method = "jaccard") ~ Diet, data = meta_beta, permutations = 999)
-         Df SumOfSqs      R2     F Pr(>F)
-Model     1  0.36999 0.22676 1.173    0.3
-Residual  4  1.26166 0.77324             
-Total     5  1.63165 1.00000             
