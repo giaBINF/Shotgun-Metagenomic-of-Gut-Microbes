@@ -21,4 +21,7 @@ Trimmed reads were classified using Kraken2 v2.1.6 with `--paired` and a non-def
 ### Diversity and Differential Abundance Analysis
 The BIOM file was imported into phyloseq v1.54.2.<sup>14,15</sup> Alpha diversity was assessed using Shannon and Simpson indices with Wilcoxon rank-sum testing. Beta diversity was evaluated using Bray-Curtis and Jaccard dissimilarity matrices with PERMANOVA via adonis2 (999 permutations).<sup>16</sup> Differential abundance was tested using ALDEx2,<sup>17</sup> with Benjamini-Hochberg false discovery rate correction. Visualizations were generated using ggplot2 v3.5.1.18.
 ## Results
-
+![Relative abundance](figs/01_relative_abundance_phylum.png)
+![Alpha Diversity](figs/02_alpha_diversity.png)
+![Beta Diversity](figs/03_beta_diversity_pcoa.png)
+![DAF](figs/04_differential_abundance_forest.png)
