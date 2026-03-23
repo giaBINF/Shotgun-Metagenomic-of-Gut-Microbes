@@ -1,0 +1,7 @@
+
+	Wilcoxon rank sum exact test
+
+data:  Simpson by Diet
+W = 6, p-value = 0.7
+alternative hypothesis: true location shift is not equal to 0
+
