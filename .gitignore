@@ -1,0 +1,2 @@
+git rm -r --cached .DS_Store
+git rm -r --cached results/
