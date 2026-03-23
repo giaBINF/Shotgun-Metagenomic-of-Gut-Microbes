@@ -1,16 +1,6 @@
-#install.packages("BiocManager")
-#BiocManager::install("biomformat")
-#BiocManager::install("phyloseq")
-#BiocManager::install("ALDEx2")
-# ============================================================
 # Assignment 3: Shotgun metagenomics diversity analysis
-# Vegan (n = 3) vs Omnivore (n = 3)
-# Based on BIOM output generated from Kraken2/Bracken pipeline
-# ============================================================
 
-# ----------------------------
-# 1. Load libraries
-# ----------------------------
+# Load libraries
 library(biomformat)
 library(phyloseq)
 library(readr)
@@ -18,138 +8,107 @@ library(dplyr)
 library(ggplot2)
 library(forcats)
 library(vegan)
-library(ggrepel)
 library(patchwork)
-
-# Optional differential abundance package
-# Install first if needed:
-# install.packages("BiocManager")
-# BiocManager::install("ALDEx2")
 library(ALDEx2)
 
-# ----------------------------
-# 2. Set file paths
-# ----------------------------
-base_dir <- "~/Desktop/6110/assignment3"
-
+# File paths
+base_dir  <- "~/Desktop/6110/assignment3"
 biom_file <- file.path(base_dir, "results", "biom", "table.biom")
-metadata_file <- file.path(base_dir, "data", "metadata.tsv")
-
-fig_dir <- file.path(base_dir, "figs")
-res_dir <- file.path(base_dir, "results", "R")
+meta_file <- file.path(base_dir, "data", "metadata.tsv")
+fig_dir   <- file.path(base_dir, "figs")
+res_dir   <- file.path(base_dir, "results", "R")
 
 dir.create(fig_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(res_dir, recursive = TRUE, showWarnings = FALSE)
 
-# ----------------------------
-# 3. Load BIOM and create phyloseq object
-# ----------------------------
+# Parameters
+n_top_phyla    <- 6
+diff_threshold <- 5
+
+diet_colors <- c(
+  "Omnivore" = "#D55E00",
+  "Vegan"    = "#0072B2"
+)
+
+wong_palette <- c(
+  "#000000", "#E69F00", "#56B4E9", "#009E73",
+  "#F0E442", "#0072B2", "#D55E00"
+)
+
+# Load BIOM and metadata
 biom_data <- read_biom(biom_file)
 ps <- import_biom(biom_data)
 
-# Keep only Bracken species samples if both raw Kraken and Bracken samples exist
+# Keep only Bracken-derived samples
 ps <- prune_samples(grepl("_bracken_species$", sample_names(ps)), ps)
 
-# Clean sample names to match metadata
+# Clean sample names
 sample_names(ps) <- gsub("_bracken_species$", "", sample_names(ps))
 
-# ----------------------------
-# 4. Create / load metadata
-# ----------------------------
-# If metadata file does not exist, create it automatically
-if (!file.exists(metadata_file)) {
-  metadata_df <- data.frame(
-    Sample_ID = c("SRR8146972", "SRR8146973", "SRR8146974",
-                  "SRR8146975", "SRR8146976", "SRR8146977"),
-    Diet = c("Omnivore", "Vegan", "Vegan",
-             "Omnivore", "Omnivore", "Vegan")
-  )
-  
-  write.table(
-    metadata_df,
-    metadata_file,
-    sep = "\t",
-    row.names = FALSE,
-    quote = FALSE
-  )
-}
+meta_df <- read_tsv(meta_file, show_col_types = FALSE) %>%
+  as.data.frame()
 
-metadata_df <- read_tsv(metadata_file, show_col_types = FALSE)
-metadata_df <- as.data.frame(metadata_df)
+rownames(meta_df) <- meta_df$Sample_ID
+meta_df$Sample_ID <- NULL
 
-rownames(metadata_df) <- metadata_df$Sample_ID
-metadata_df$Sample_ID <- NULL
-
-# Ensure sample names match
-stopifnot(all(sample_names(ps) %in% rownames(metadata_df)))
-
-# Reorder metadata to match phyloseq sample order
-metadata_df <- metadata_df[sample_names(ps), , drop = FALSE]
-
-# Attach metadata
-sample_data(ps) <- metadata_df
+sample_data(ps) <- meta_df
 sample_data(ps)$Diet <- as.factor(sample_data(ps)$Diet)
 
-# ----------------------------
-# 5. Clean taxonomy table
-# ----------------------------
-# ----------------------------
-# 5. Clean taxonomy table
-# ----------------------------
+# Clean taxonomy table
 tax_df <- as.data.frame(as(tax_table(ps), "matrix"), stringsAsFactors = FALSE)
 
-# Add missing rank columns if needed
-expected_names <- c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")
+expected_names <- c(
+  "Kingdom", "Phylum", "Class", "Order",
+  "Family", "Genus", "Species"
+)
 
+# Add missing columns
 if (ncol(tax_df) < length(expected_names)) {
   for (i in (ncol(tax_df) + 1):length(expected_names)) {
-    tax_df[[ expected_names[i] ]] <- NA
+    tax_df[[expected_names[i]]] <- NA
   }
 }
 
 colnames(tax_df)[1:7] <- expected_names
-
-# Reorder to standard rank order
 tax_df <- tax_df[, expected_names]
 
-# Remove prefixes like d__, p__, c__, etc.
 tax_df[] <- lapply(tax_df, function(x) gsub("^[a-z]__", "", x))
 
-# Replace blanks / NA
 tax_df[is.na(tax_df)] <- "Unknown"
 tax_df[tax_df == ""] <- "Unknown"
 
-# Put back into phyloseq
 tax_table(ps) <- tax_table(as.matrix(tax_df))
 
-# ----------------------------
-# 6. Rarefaction
-# ----------------------------
-otu_df <- as.data.frame(t(otu_table(ps)))
+ps <- subset_taxa(ps, !Phylum %in% c("Chordata", "Unknown", ""))
 
-png(file.path(fig_dir, "01_rarefaction_curve.png"), width = 3000, height = 2000, res = 300)
-rarecurve(
-  otu_df,
-  step = 100,
-  label = TRUE,
-  xlab = "Sequencing Depth",
-  ylab = "Number of Observed Taxa"
+base_theme <- theme_bw() +
+  theme(
+    plot.title = element_text(size = 13, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 11, face = "bold"),
+    axis.text = element_text(size = 10, color = "black"),
+    panel.background = element_rect(fill = "grey92"),
+    panel.grid.major = element_line(color = "white", linewidth = 0.6),
+    panel.grid.minor = element_blank()
+  )
+
+legend_theme <- theme(
+  legend.position = "right",
+  legend.title = element_text(size = 11, face = "bold"),
+  legend.text = element_text(size = 10),
+  legend.background = element_rect(fill = "white", color = NA),
+  legend.key = element_rect(fill = "white", color = NA)
 )
-dev.off()
 
-# ----------------------------
-# 7. Relative abundance at Phylum level
-# ----------------------------
+# 1. Relative abundance at phylum level
 ps_rel <- transform_sample_counts(ps, function(x) x / sum(x))
 ps_phy <- tax_glom(ps_rel, taxrank = "Phylum")
 df_phy <- psmelt(ps_phy)
 
-# Top 10 phyla
 top_phyla <- df_phy %>%
   group_by(Phylum) %>%
   summarise(total = sum(Abundance), .groups = "drop") %>%
   arrange(desc(total)) %>%
-  slice(1:10) %>%
+  slice(1:n_top_phyla) %>%
   pull(Phylum)
 
 df_phy$Phylum <- ifelse(df_phy$Phylum %in% top_phyla, df_phy$Phylum, "Other")
@@ -163,133 +122,139 @@ p_phylum <- ggplot(
   )
 ) +
   geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = wong_palette) +
   labs(
     y = "Relative Abundance",
     x = "Sample",
     fill = "Phylum"
   ) +
   facet_wrap(~Diet, scales = "free_x") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme_gray() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5))
 
 ggsave(
-  file.path(fig_dir, "02_relative_abundance_phylum.png"),
+  file.path(fig_dir, "01_relative_abundance_phylum.png"),
   plot = p_phylum,
-  width = 10,
+  width = 14,
   height = 6.5,
   dpi = 300
 )
 
-# ----------------------------
-# 8. Alpha diversity
-# ----------------------------
+# 2. Alpha diversity
 alpha_div <- estimate_richness(ps, measures = c("Shannon", "Simpson"))
 alpha_div$Sample <- rownames(alpha_div)
-alpha_div$Diet <- sample_data(ps)$Diet
+alpha_div$Diet   <- sample_data(ps)$Diet
 
 write.csv(alpha_div, file.path(res_dir, "alpha_diversity.csv"), row.names = FALSE)
 
-p_shannon <- ggplot(alpha_div, aes(x = Sample, y = Shannon, color = Diet, label = round(Shannon, 3))) +
-  geom_point(size = 4, alpha = 0.8) +
-  geom_text_repel(size = 3, max.overlaps = 20) +
-  facet_wrap(~Diet, scales = "free_x") +
-  labs(y = "Shannon Diversity", x = "Sample") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+p_shannon <- ggplot(alpha_div, aes(x = Diet, y = Shannon, color = Diet)) +
+  geom_boxplot(outlier.shape = NA, width = 0.4) +
+  geom_jitter(width = 0.1, size = 3) +
+  scale_color_manual(values = diet_colors, name = "Diet") +
+  labs(title = "Shannon Diversity", x = "Diet", y = "Shannon Index") +
+  base_theme +
+  theme(legend.position = "none")
 
-p_simpson <- ggplot(alpha_div, aes(x = Sample, y = Simpson, color = Diet, label = round(Simpson, 3))) +
-  geom_point(size = 4, alpha = 0.8) +
-  geom_text_repel(size = 3, max.overlaps = 20) +
-  facet_wrap(~Diet, scales = "free_x") +
-  labs(y = "Simpson Diversity", x = "Sample") +
-  theme_minimal() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+p_simpson <- ggplot(alpha_div, aes(x = Diet, y = Simpson, color = Diet)) +
+  geom_boxplot(outlier.shape = NA, width = 0.4) +
+  geom_jitter(width = 0.1, size = 3) +
+  scale_color_manual(values = diet_colors, name = "Diet") +
+  labs(title = "Simpson Diversity", x = "Diet", y = "Simpson Index") +
+  base_theme +
+  legend_theme
 
 ggsave(
-  file.path(fig_dir, "03_alpha_diversity_shannon.png"),
-  plot = p_shannon,
+  file.path(fig_dir, "02_alpha_diversity.png"),
+  plot = p_shannon + p_simpson + plot_layout(guides = "collect"),
   width = 10,
   height = 6,
   dpi = 300
 )
 
-ggsave(
-  file.path(fig_dir, "04_alpha_diversity_simpson.png"),
-  plot = p_simpson,
-  width = 10,
-  height = 6,
-  dpi = 300
+capture.output(
+  wilcox.test(Shannon ~ Diet, data = alpha_div),
+  file = file.path(res_dir, "shannon_wilcox.txt")
 )
 
-# Optional group comparison
-shannon_test <- wilcox.test(Shannon ~ Diet, data = alpha_div)
-simpson_test <- wilcox.test(Simpson ~ Diet, data = alpha_div)
+capture.output(
+  wilcox.test(Simpson ~ Diet, data = alpha_div),
+  file = file.path(res_dir, "simpson_wilcox.txt")
+)
 
-capture.output(shannon_test, file = file.path(res_dir, "shannon_wilcox.txt"))
-capture.output(simpson_test, file = file.path(res_dir, "simpson_wilcox.txt"))
+# 3. Beta diversity
+meta_plot_df <- as(sample_data(ps), "data.frame")
+meta_plot_df$SampleID <- rownames(meta_plot_df)
 
-# ----------------------------
-# 9. Beta diversity
-# ----------------------------
+make_pcoa_plot <- function(ord, title, meta_df) {
+  coords <- as.data.frame(ord$vectors[, 1:2])
+  colnames(coords) <- c("Axis1", "Axis2")
+  coords$SampleID <- rownames(coords)
+  coords <- left_join(coords, meta_df, by = "SampleID")
+  
+  pct <- round(ord$values$Relative_eig[1:2] * 100, 1)
+  
+  ggplot(coords, aes(x = Axis1, y = Axis2, color = Diet)) +
+    geom_point(size = 4) +
+    scale_color_manual(values = diet_colors, name = "Diet") +
+    labs(
+      title = title,
+      x = paste0("PC1 [", pct[1], "%]"),
+      y = paste0("PC2 [", pct[2], "%]")
+    ) +
+    base_theme
+}
+
 ord_bray <- ordinate(ps, method = "PCoA", distance = "bray")
-p_bray <- plot_ordination(ps, ord_bray, type = "samples", color = "Diet") +
-  geom_point(size = 4) +
-  labs(title = "Bray-Curtis PCoA") +
-  theme_minimal()
-
 ord_jaccard <- ordinate(ps, method = "PCoA", distance = "jaccard")
-p_jaccard <- plot_ordination(ps, ord_jaccard, type = "samples", color = "Diet") +
-  geom_point(size = 4) +
-  labs(title = "Jaccard PCoA") +
-  theme_minimal()
 
-p_beta <- p_bray + p_jaccard + plot_layout(guides = "collect")
+p_bray <- make_pcoa_plot(ord_bray, "Bray-Curtis PCoA", meta_plot_df) +
+  theme(legend.position = "none")
+
+p_jaccard <- make_pcoa_plot(ord_jaccard, "Jaccard PCoA", meta_plot_df) +
+  legend_theme
 
 ggsave(
-  file.path(fig_dir, "05_beta_diversity_pcoa.png"),
-  plot = p_beta,
-  width = 10,
-  height = 6.5,
+  file.path(fig_dir, "03_beta_diversity_pcoa.png"),
+  plot = p_bray + p_jaccard + plot_layout(guides = "collect"),
+  width = 12,
+  height = 6,
   dpi = 300
 )
 
-# PERMANOVA
-metadata_beta <- as(sample_data(ps), "data.frame")
+meta_beta <- as(sample_data(ps), "data.frame")
 
-set.seed(123)
-permanova_bray <- adonis2(
-  phyloseq::distance(ps, method = "bray") ~ Diet,
-  data = metadata_beta,
-  permutations = 999
+capture.output(
+  adonis2(phyloseq::distance(ps, method = "bray") ~ Diet,
+          data = meta_beta, permutations = 999),
+  file = file.path(res_dir, "permanova_bray.txt")
 )
 
-set.seed(123)
-permanova_jaccard <- adonis2(
-  phyloseq::distance(ps, method = "jaccard") ~ Diet,
-  data = metadata_beta,
-  permutations = 999
+capture.output(
+  adonis2(phyloseq::distance(ps, method = "jaccard") ~ Diet,
+          data = meta_beta, permutations = 999),
+  file = file.path(res_dir, "permanova_jaccard.txt")
 )
 
-capture.output(permanova_bray, file = file.path(res_dir, "permanova_bray.txt"))
-capture.output(permanova_jaccard, file = file.path(res_dir, "permanova_jaccard.txt"))
-
-# ----------------------------
-# 10. Differential abundance with ALDEx2
-# ----------------------------
-# Use raw counts
+# 4. Differential abundance with ALDEx2
 count_matrix <- as(otu_table(ps), "matrix")
 
 if (!taxa_are_rows(ps)) {
   count_matrix <- t(count_matrix)
 }
 
-# Diet vector must align with columns (samples)
-conds <- sample_data(ps)$Diet
-conds <- as.character(conds)
+conds <- as.character(sample_data(ps)$Diet)
 
 set.seed(123)
-aldex_out <- aldex.clr(count_matrix, conds, mc.samples = 128, denom = "all", verbose = FALSE)
-aldex_tt <- aldex.ttest(aldex_out)
+
+aldex_out <- aldex.clr(
+  count_matrix,
+  conds,
+  mc.samples = 128,
+  denom = "all",
+  verbose = FALSE
+)
+
+aldex_tt  <- aldex.ttest(aldex_out)
 aldex_eff <- aldex.effect(aldex_out)
 
 aldex_res <- cbind(
@@ -298,47 +263,66 @@ aldex_res <- cbind(
   aldex_eff
 )
 
-# Attach taxonomy
-tax_df <- as.data.frame(tax_table(ps))
-tax_df$feature <- rownames(tax_df)
+tax_df2 <- as.data.frame(tax_table(ps), stringsAsFactors = FALSE)
+tax_df2$feature <- rownames(tax_df2)
 
-aldex_res <- left_join(aldex_res, tax_df, by = "feature")
+aldex_res <- left_join(aldex_res, tax_df2, by = "feature")
 
 write.csv(aldex_res, file.path(res_dir, "aldex2_results.csv"), row.names = FALSE)
 
-# Volcano-style plot using effect vs adjusted p-value
-aldex_res$significant <- aldex_res$wi.eBH < 0.05
-aldex_res$label <- ifelse(
-  aldex_res$significant & !is.na(aldex_res$Species),
-  aldex_res$Species,
-  ""
-)
+# 5. Differential abundance forest plot
+forest_data <- aldex_res %>%
+  filter(!is.na(Species), !is.na(diff.btw), abs(diff.btw) > diff_threshold) %>%
+  group_by(Species) %>%
+  slice_max(abs(diff.btw), n = 1) %>%
+  ungroup() %>%
+  arrange(desc(diff.btw)) %>%
+  mutate(
+    Scientific_Name = ifelse(
+      grepl("Unknown|NA", Genus),
+      Species,
+      paste(Genus, Species)
+    ),
+    sig = ifelse(wi.eBH < 0.05, "< 0.05", "≥ 0.05"),
+    Scientific_Name = factor(Scientific_Name, levels = unique(Scientific_Name))
+  )
 
-p_daa <- ggplot(aldex_res, aes(x = diff.btw, y = -log10(wi.eBH))) +
-  geom_point(aes(color = significant), alpha = 0.8, size = 2.5) +
-  geom_text_repel(
-    aes(label = label),
-    size = 3,
-    max.overlaps = 20
+cat("Species in forest plot:", nrow(forest_data), "\n")
+
+p_forest <- ggplot(forest_data, aes(x = diff.btw, y = Scientific_Name)) +
+  geom_vline(xintercept = 0, color = "red", linewidth = 1) +
+  geom_errorbarh(
+    aes(xmin = diff.btw - diff.win, xmax = diff.btw + diff.win),
+    height = 0.4,
+    linewidth = 0.8
+  ) +
+  geom_point(aes(fill = sig), shape = 21, size = 4, color = "black") +
+  scale_fill_manual(
+    values = c("< 0.05" = "#D55E00", "≥ 0.05" = "grey60"),
+    name = "Adjusted p-value"
   ) +
   labs(
-    x = "Difference between groups",
-    y = "-log10 adjusted p-value",
-    color = "Significant"
+    x = "Estimated CLR Abundance Difference (Vegan vs. Omnivore)",
+    y = "Species"
   ) +
-  theme_minimal()
+  base_theme +
+  legend_theme +
+  theme(
+    axis.text.y = element_text(size = 11),
+    axis.title.x = element_text(margin = margin(t = 10)),
+    axis.title.y = element_text(margin = margin(r = 10)),
+    plot.margin = margin(15, 20, 15, 15)
+  )
 
 ggsave(
-  file.path(fig_dir, "06_differential_abundance_aldex2.png"),
-  plot = p_daa,
-  width = 9,
-  height = 6,
+  file.path(fig_dir, "04_differential_abundance_forest.png"),
+  plot = p_forest,
+  width = 10,
+  height = max(6, nrow(forest_data) * 0.35),
   dpi = 300
 )
 
-# ----------------------------
-# 11. Save phyloseq object
-# ----------------------------
+# 6. Save phyloseq object
 saveRDS(ps, file = file.path(res_dir, "phyloseq_object.rds"))
 
 cat("Analysis complete.\n")
