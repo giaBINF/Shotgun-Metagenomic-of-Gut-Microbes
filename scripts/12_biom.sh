@@ -15,15 +15,12 @@ KRAKEN_DIR="$HOME/assignment3/results/kraken2_trimmed"
 mkdir -p "$BIOM_DIR"
 cd "$BIOM_DIR"
 
-# Download the actual script from the repo if missing
 if [ ! -f kraken_biom.py ]; then
     wget https://raw.githubusercontent.com/smdabdoub/kraken-biom/master/kraken_biom.py
 fi
 
-# Install locally if needed
 python -m pip install --user biom-format h5py
 
-# Run conversion on Kraken report files
 python kraken_biom.py "$KRAKEN_DIR"/*.report --fmt json -o table.biom
 
 echo "BIOM file created:"

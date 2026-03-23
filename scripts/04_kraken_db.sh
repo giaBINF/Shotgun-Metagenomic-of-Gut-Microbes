@@ -7,11 +7,9 @@
 #SBATCH --output=%x_%j_output.txt
 #SBATCH --error=%x_%j_error.txt
 
-# Go to scratch
 mkdir -p /scratch/$USER/assignment3/kraken_db
 cd /scratch/$USER/assignment3/kraken_db
 
-# Download the CORRECT database (from lecture)
 wget https://genome-idx.s3.amazonaws.com/kraken/k2_standard_08_GB_20251015.tar.gz
 
 # Extract
